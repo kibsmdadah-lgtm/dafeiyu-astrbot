@@ -4,7 +4,7 @@
 
 | 文件 | 干什么 |
 |---|---|
-| `preflight.py` | 体检：Python 版本、git/ffmpeg、6199/6185/6099 端口、依赖包、`.env` 密钥。不改动任何东西。 |
+| `preflight.py` | 体检：Python 版本、git/ffmpeg、6199/6185/6099 端口、依赖包、`.env` 密钥。不改写配置或项目文件。 |
 | `bootstrap.sh` | 一键：建 venv → 装依赖 → 组装 `payload/` → 跑离线测试 → 体检。仓库外运行时会先克隆。 |
 | `bootstrap.ps1` | 同上，Windows PowerShell 版。 |
 | `requirements-plugin.txt` | 插件依赖：`dashscope`、`imageio-ffmpeg`、`aiohttp`。 |
@@ -33,4 +33,14 @@ python deploy-kit/preflight.py --env .env # 复查密钥
 
 `bootstrap.sh` 最后会跑仓库自带的离线测试（`tests/test_face_rules.py`、
 `tests/test_schedule_awareness.py`），它们不回连 QQ、不调用付费模型、不需要密钥。
-所以「全部通过」是真的说：这套代码在你机器上能跑，而不是脚本自己说成功。
+测试通过表示这两组离线回归通过；不能据此认定 QQ 登录、模型接口、语音和联网链路均已可用。
+
+Windows 脚本会优先采用显式的 `-Target` 参数；依赖安装、测试或检查返回非零退出码时立即停止。生成目录清理前会验证路径和链接。
+
+## Windows 引导脚本回归检查
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File tests/test_bootstrap.ps1
+```
+
+检查就地模式、显式目标目录、已有目标目录，以及原生命令失败时停止；使用模拟 Git，不联网、不安装依赖、不连接机器人。

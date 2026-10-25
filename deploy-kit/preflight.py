@@ -10,7 +10,7 @@
   2. git / ffmpeg 是否可用
   3. 关键端口是否空闲（6199 WS / 6185 面板 / 6099 NapCat WebUI）
   4. 可选依赖包是否装好（dashscope / imageio-ffmpeg / aiohttp）
-  5. .env 里的密钥是否齐全（缺失只警告，不报错）
+  5. .env 里的密钥是否齐全（显式指定 --env 后，空白或占位密钥作为阻塞项）
 
 退出码：0 = 可以往下走；1 = 有硬性阻塞项。
 """
@@ -84,7 +84,7 @@ def check_packages() -> None:
         if importlib.util.find_spec(pkg):
             print(f"{OK} 依赖 {pkg}")
         else:
-            print(f"{WARN} 缺依赖 {pkg} — pip install -r requirements-plugin.txt")
+            print(f"{WARN} 缺依赖 {pkg} — pip install -r deploy-kit/requirements-plugin.txt")
             warnings.append(f"缺 Python 包 {pkg}")
 
 
@@ -98,7 +98,7 @@ def check_env(env_path: str | None) -> None:
         return
     keys = {"DEEPSEEK_API_KEY": "对话主力", "DASHSCOPE_API_KEY": "看图/听写/语音"}
     values: dict[str, str] = {}
-    with open(env_path, encoding="utf-8") as fh:
+    with open(env_path, encoding="utf-8-sig") as fh:
         for line in fh:
             line = line.strip()
             if line and not line.startswith("#") and "=" in line:

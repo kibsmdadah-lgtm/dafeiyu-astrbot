@@ -84,7 +84,19 @@ else
 fi
 
 # --- 3. 组装 payload ---------------------------------------------------------
-rm -rf "$SRC/payload"
+# Verify the generated directory before recursive removal.
+"$VPY" - "$(wpath "$SRC")" <<'PY'
+from pathlib import Path
+import shutil, sys
+root = Path(sys.argv[1]).resolve()
+target = root / "payload"
+if target.is_symlink() or target.resolve().parent != root:
+    raise SystemExit("Unsafe payload path")
+if target.exists():
+    if any(p.is_symlink() for p in target.rglob("*")):
+        raise SystemExit("Payload contains links; clean manually")
+    shutil.rmtree(target)
+PY
 mkdir -p "$SRC/payload/plugins" "$SRC/payload/persona"
 cp -r "$SRC"/plugin/* "$SRC/payload/plugins/"
 cp "$SRC"/persona/*.md "$SRC/payload/persona/"
@@ -98,7 +110,7 @@ say "跑离线回归测试（不花钱、不连 QQ）"
 say "第三个测试需要 ffmpeg，可选：$VPY tests/test_video_processing.py"
 
 say "跑前置检查"
-"$VPY" "$(wpath "$ROOT/deploy-kit/preflight.py")" || true
+"$VPY" "$(wpath "$ROOT/deploy-kit/preflight.py")"
 
 cat <<'EOF'
 

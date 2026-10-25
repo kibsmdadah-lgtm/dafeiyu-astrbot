@@ -1,77 +1,90 @@
-# 大肥鱼一键引导（Windows PowerShell）
-#
-#   powershell -ExecutionPolicy Bypass -File deploy-kit\bootstrap.ps1
-#       → 就在本仓库里跑：装依赖 + 组装 payload + 自检
-#   powershell -ExecutionPolicy Bypass -File deploy-kit\bootstrap.ps1 -Target D:\bots\dfy
-#       → 在仓库外跑：先克隆到该目录，再引导
-#
-# 它不会、也无法替你做的事：装 AstrBot / NapCat、扫码登录 QQ、填 API 密钥。
-
+﻿# 大肥鱼部署引导：就地安装，或使用 -Target 克隆到指定目录。
+[CmdletBinding()]
 param(
     [string]$Target = "",
     [string]$Upstream = "https://github.com/whyever77/dafeiyu-astrbot.git"
 )
-
 $ErrorActionPreference = "Stop"
-$Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$Root = Split-Path -Parent $PSScriptRoot
+function Say([string]$Message) { Write-Host "==> $Message" -ForegroundColor Cyan }
+function Invoke-Checked {
+    param([string]$Program, [string[]]$Arguments)
+    $global:LASTEXITCODE = 0
+    & $Program @Arguments
+    if ($LASTEXITCODE -ne 0) { throw "$Program failed with exit code $LASTEXITCODE" }
+}
 
-function Say($msg) { Write-Host "==> $msg" -ForegroundColor Cyan }
-
-# --- 1. 代码：就地用 vs 克隆 ---
-if ((Test-Path (Join-Path $Root "plugin")) -and (Test-Path (Join-Path $Root "persona"))) {
+# 明确的 -Target 优先；不指定时使用脚本所在仓库。
+if ([string]::IsNullOrWhiteSpace($Target)) {
     $Src = $Root
-    Say "检测到当前目录就是项目仓库，跳过克隆: $Src"
-} else {
-    if (-not $Target) { $Target = "dafeiyu-astrbot" }
-    if (Test-Path (Join-Path $Target ".git")) {
-        Say "更新已有仓库: $Target"
-        git -C $Target pull --ff-only
-    } else {
-        Say "克隆上游: $Upstream -> $Target"
-        git clone --depth 1 $Upstream $Target
+    if (-not ((Test-Path -LiteralPath (Join-Path $Src 'plugin')) -and (Test-Path -LiteralPath (Join-Path $Src 'persona')))) {
+        throw 'Current directory is not a project checkout; specify -Target.'
     }
-    $Src = (Resolve-Path $Target).Path
-    Say "工作目录: $Src"
+    Say "就地引导: $Src"
+} else {
+    $Target = [IO.Path]::GetFullPath($Target)
+    if (Test-Path -LiteralPath (Join-Path $Target '.git')) {
+        Say "更新已有仓库: $Target"
+        Invoke-Checked 'git' @('-C', $Target, 'pull', '--ff-only')
+    } else {
+        Say "克隆仓库: $Target"
+        Invoke-Checked 'git' @('clone', '--depth', '1', $Upstream, $Target)
+    }
+    $Src = (Resolve-Path -LiteralPath $Target).Path
+}
+$Src = [IO.Path]::GetFullPath($Src)
+foreach ($entry in @('plugin','persona','tests')) {
+    if (-not (Test-Path -LiteralPath (Join-Path $Src $entry))) { throw "Missing project directory: $entry" }
 }
 
-# --- 2. 虚拟环境 + 依赖 ---
-$venv = Join-Path $Src ".venv"
-if (-not (Test-Path $venv)) {
-    Say "创建虚拟环境"
-    python -m venv $venv
+$venv = Join-Path $Src '.venv'
+$py = Join-Path $venv 'Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $py)) { $py = Join-Path $venv 'bin\python' }
+if (-not (Test-Path -LiteralPath $py)) {
+    Say '创建虚拟环境'
+    Invoke-Checked 'python' @('-m', 'venv', $venv)
+    $py = Join-Path $venv 'Scripts\python.exe'
+    if (-not (Test-Path -LiteralPath $py)) { $py = Join-Path $venv 'bin\python' }
 }
-$py = Join-Path $venv "Scripts\python.exe"
-if (-not (Test-Path $py)) { $py = Join-Path $venv "bin\python" }
-Say "安装插件依赖"
-& $py -m pip install -q --upgrade pip
-& $py -m pip install -q -r (Join-Path $Root "deploy-kit\requirements-plugin.txt")
+if (-not (Test-Path -LiteralPath $py)) { throw 'Virtual environment Python was not created.' }
+Invoke-Checked $py @('-c', 'import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)')
 
-# --- 3. 组装 payload ---
-$payload = Join-Path $Src "payload"
-if (Test-Path $payload) { Remove-Item $payload -Recurse -Force }
-New-Item -ItemType Directory -Force -Path (Join-Path $payload "plugins"), (Join-Path $payload "persona") | Out-Null
-Copy-Item (Join-Path $Src "plugin\*") (Join-Path $payload "plugins") -Recurse -Force
-Copy-Item (Join-Path $Src "persona\*.md") (Join-Path $payload "persona") -Force
+$requirements = Join-Path $PSScriptRoot 'requirements-plugin.txt'
+$global:LASTEXITCODE = 0
+& $py -m pip --version *> $null
+$pipAvailable = $LASTEXITCODE -eq 0
+Say '安装插件依赖'
+if ($pipAvailable) {
+    Invoke-Checked $py @('-m', 'pip', 'install', '-q', '--upgrade', 'pip')
+    Invoke-Checked $py @('-m', 'pip', 'install', '-q', '-r', $requirements)
+} elseif (Get-Command uv -ErrorAction SilentlyContinue) {
+    Invoke-Checked 'uv' @('pip', 'install', '--python', $py, '-q', '-r', $requirements)
+} else {
+    Invoke-Checked $py @('-m', 'ensurepip', '--upgrade')
+    Invoke-Checked $py @('-m', 'pip', 'install', '-q', '-r', $requirements)
+}
+
+$payload = [IO.Path]::GetFullPath((Join-Path $Src 'payload'))
+# 只允许清理明确位于此仓库下的 payload，不跟随重解析目录。
+if ([IO.Path]::GetDirectoryName($payload) -ne $Src.TrimEnd('\','/')) { throw 'Unsafe payload target.' }
+if (Test-Path -LiteralPath $payload) {
+    $item = Get-Item -LiteralPath $payload -Force
+    if (($item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) { throw 'Payload cannot be a link.' }
+    $links = @(Get-ChildItem -LiteralPath $payload -Recurse -Force | Where-Object { ($_.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0 })
+    if ($links.Count -gt 0) { throw 'Payload contains links; clean it manually.' }
+    Remove-Item -LiteralPath $payload -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $payload 'plugins'), (Join-Path $payload 'persona') | Out-Null
+Copy-Item (Join-Path $Src 'plugin\*') (Join-Path $payload 'plugins') -Recurse -Force
+Copy-Item (Join-Path $Src 'persona\*.md') (Join-Path $payload 'persona') -Force
 Say "已组装: $payload"
-Say "  plugins\ → 拷进 AstrBot 数据目录的 data\plugins\"
-Say "  persona\ → 内容粘进 AstrBot 面板「人格」"
 
-# --- 4. 自检 ---
-Say "跑离线回归测试（不花钱、不连 QQ）"
-Push-Location $Src
-& $py tests\test_face_rules.py
-& $py tests\test_schedule_awareness.py
-Pop-Location
-
-Say "跑前置检查"
-& $py (Join-Path $Root "deploy-kit\preflight.py")
-
-Write-Host @"
-
-=== 接下来只剩三件手工活 ===
- 1. 装 AstrBot（Launcher 版）+ NapCat（Shell.Node 版），NapCat 用小号扫码
- 2. AstrBot 里加 ws://127.0.0.1:6199/ws，配 DeepSeek / 百炼 提供商
- 3. 把 payload\plugins\* 拷进 AstrBot 的 data\plugins\，重启
-
-详见 QUICKSTART.md 与 README.md。
-"@ -ForegroundColor Yellow
+Say '运行离线测试'
+Push-Location -LiteralPath $Src
+try {
+    Invoke-Checked $py @('tests/test_face_rules.py')
+    Invoke-Checked $py @('tests/test_schedule_awareness.py')
+} finally { Pop-Location }
+Say '运行前置检查'
+Invoke-Checked $py @((Join-Path $PSScriptRoot 'preflight.py'))
+Say '部署辅助检查完成；尚需配置 AstrBot、NapCat、提供商与人格。详见 QUICKSTART.md。'

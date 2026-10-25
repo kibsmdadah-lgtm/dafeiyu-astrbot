@@ -34,7 +34,7 @@ powershell -ExecutionPolicy Bypass -File deploy-kit\bootstrap.ps1
 
 它会：建虚拟环境 → 装 `dashscope` / `imageio-ffmpeg` / `aiohttp` →
 把插件和人格组装到 `payload/` → 跑离线回归测试。
-看到 **`结果：全部通过 OK`** 就说明这套代码在你这台机器上是好的。
+离线测试通过只代表这两组回归检查通过；QQ 登录、模型凭据、语音和平台连接还需按后续步骤验收。
 
 ## 第 3 步：填密钥（3 分钟）
 
@@ -84,8 +84,9 @@ AstrBot 侧：平台适配器选 **QQ(aiocqhttp)**，端口 **6199**。
 ## 第 8 步：装插件 + 人格（3 分钟）
 
 ```bash
-# payload/ 是上一步组装好的，直接拷进 AstrBot 数据目录
-cp -r payload/plugins/* <AstrBot数据目录>/data/plugins/
+# 将下列路径换成 AstrBot 实际的数据目录；不要重复添加 data/
+ASTRBOT_DATA_DIR="/实际路径/AstrBot/data"
+cp -r payload/plugins/* "$ASTRBOT_DATA_DIR/plugins/"
 ```
 
 数据目录：Launcher 版在 `…/instances/<实例id>/core/data/`；手动部署版在 AstrBot 根目录 `data/`。
